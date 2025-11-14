@@ -65,6 +65,17 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png'
 })
 
+// Custom red icon for searched POI
+const redIcon = L.icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+  iconRetinaUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41]
+})
+
 // Initialize Firebase if env present
 let db = null
 try {
@@ -93,6 +104,27 @@ export default function App() {
   const [error, setError] = useState(null)
   const [recent, setRecent] = useState([])
   const mapRef = useRef()
+
+  // Keep map size correct on window resize (debounced)
+  useEffect(() => {
+    let timeout = null
+    function handleResize() {
+      if (timeout) clearTimeout(timeout)
+      timeout = setTimeout(() => {
+        try {
+          mapRef.current && mapRef.current.invalidateSize()
+        } catch (e) {}
+      }, 150)
+    }
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      if (timeout) clearTimeout(timeout)
+    }
+  }, [])
+
+  // Search radius (meters)
+  const SEARCH_RADIUS = 1000
 
   useEffect(() => {
     // load recent searches from Firestore (optional)
@@ -144,7 +176,7 @@ export default function App() {
 
       // 2) Query Overpass API for POIs nearby (amenity/shop/tourism)
       // We'll use a radius of 1000 meters, and return up to 5 nodes
-      const radius = 1000
+      const radius = SEARCH_RADIUS
       const overpassQuery = `[
         out:json][timeout:25];
         (
@@ -233,7 +265,7 @@ export default function App() {
               value={queryText}
               onChange={e => setQueryText(e.target.value)}
               placeholder="ví dụ: Hội An, Hà Nội, Bến Thành"
-              className="w-full border border-gray-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-sky-300"
+              className="w-full bg-white placeholder-gray-400 border border-gray-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-sky-300"
             />
             <div className="flex gap-2">
               <button type="submit" className="flex-1 px-4 py-2 rounded-lg bg-sky-600 text-white shadow">{loading ? 'Đang tìm...' : 'Tìm'}</button>
@@ -282,7 +314,13 @@ export default function App() {
           )}
 
           <MapContainer
-            whenCreated={map => { mapRef.current = map }}
+            whenCreated={map => {
+              mapRef.current = map
+              // ensure Leaflet recalculates size after mount (fixes half-rendered tiles)
+              setTimeout(() => {
+                try { map.invalidateSize() } catch (e) { /* ignore */ }
+              }, 200)
+            }}
             center={[center.lat, center.lon]}
             zoom={zoom}
             style={{ height: '100%', width: '100%' }}
@@ -292,6 +330,16 @@ export default function App() {
               attribution='&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
+
+            {/* Red pin for the searched center (POI-like) */}
+            <Marker position={[center.lat, center.lon]} icon={redIcon} zIndexOffset={1000}>
+              <Popup>
+                <div className="text-sm text-gray-800">
+                  <div className="font-semibold">{queryText}</div>
+                  <div className="text-xs text-gray-500">Tọa độ: {center.lat.toFixed(5)}, {center.lon.toFixed(5)}</div>
+                </div>
+              </Popup>
+            </Marker>
 
             {pois.map((p, idx) => (
               <Marker key={p.id} position={[p.lat, p.lon]}>
@@ -305,7 +353,7 @@ export default function App() {
               </Marker>
             ))}
 
-            <Circle center={[center.lat, center.lon]} radius={1000} pathOptions={{ color: '#0ea5a4', opacity: 0.2 }} />
+            <Circle center={[center.lat, center.lon]} radius={SEARCH_RADIUS} pathOptions={{ color: '#0ea5a4', opacity: 0.2 }} />
           </MapContainer>
           <div className="absolute left-4 bottom-4 bg-white/90 p-2 rounded shadow text-xs text-gray-600">Lat: {center.lat.toFixed(5)}, Lon: {center.lon.toFixed(5)}</div>
         </div>
