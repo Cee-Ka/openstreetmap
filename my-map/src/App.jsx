@@ -49,9 +49,6 @@ import React, { useEffect, useState, useRef } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import axios from 'axios'
-// Firebase (tùy chọn)
-import { initializeApp } from 'firebase/app'
-import { getFirestore, collection, addDoc, query, orderBy, limit, getDocs } from 'firebase/firestore'
 
 import 'leaflet/dist/leaflet.css'
 
@@ -76,24 +73,7 @@ const redIcon = L.icon({
   shadowSize: [41, 41]
 })
 
-// Initialize Firebase if env present
-let db = null
-try {
-  const firebaseConfig = {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-    appId: import.meta.env.VITE_FIREBASE_APP_ID
-  }
-  if (firebaseConfig.apiKey) {
-    const app = initializeApp(firebaseConfig)
-    db = getFirestore(app)
-  }
-} catch (e) {
-  console.warn('Firebase init skipped or failed:', e.message)
-}
+// (Firebase removed) -- no Firestore initialization
 
 export default function App() {
   const [queryText, setQueryText] = useState('Ho Chi Minh City')
@@ -102,7 +82,6 @@ export default function App() {
   const [pois, setPois] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [recent, setRecent] = useState([])
   const mapRef = useRef()
 
   // Keep map size correct on window resize (debounced)
@@ -123,24 +102,18 @@ export default function App() {
     }
   }, [])
 
+  // When center changes, ensure the map recalculates size and recenters properly
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try { mapRef.current && mapRef.current.invalidateSize() } catch (e) {}
+    }, 200)
+    return () => clearTimeout(t)
+  }, [center.lat, center.lon])
+
   // Search radius (meters)
   const SEARCH_RADIUS = 1000
 
-  useEffect(() => {
-    // load recent searches from Firestore (optional)
-    if (!db) return
-    ;(async () => {
-      try {
-        const q = query(collection(db, 'searches'), orderBy('createdAt', 'desc'), limit(10))
-        const snap = await getDocs(q)
-        const arr = []
-        snap.forEach(d => arr.push({ id: d.id, ...d.data() }))
-        setRecent(arr)
-      } catch (e) {
-        console.warn('Failed to load recent', e.message)
-      }
-    })()
-  }, [])
+  // (Firestore recent searches removed)
 
   async function handleSearch(e) {
     e && e.preventDefault && e.preventDefault()
@@ -205,23 +178,17 @@ export default function App() {
       const top5 = withDist.slice(0, 5)
       setPois(top5)
 
-      // Save to Firestore recent searches (optional)
-      if (db) {
-        try {
-          await addDoc(collection(db, 'searches'), {
-            query: queryText,
-            center: { lat, lon },
-            createdAt: new Date()
-          })
-        } catch (e) {
-          console.warn('Cannot save search', e.message)
-        }
-      }
+      // (Firestore save removed)
 
       // Move map view
       if (mapRef.current && mapRef.current.setView) {
         mapRef.current.setView([lat, lon], 15)
       }
+
+      // ensure map redraws after center change (fix missing circle/tiles)
+      setTimeout(() => {
+        try { mapRef.current && mapRef.current.invalidateSize() } catch (e) {}
+      }, 250)
 
     } catch (e) {
       console.error(e)
@@ -291,17 +258,7 @@ export default function App() {
               </ul>
             </div>
 
-            {db && (
-              <div className="mt-4">
-                <h3 className="font-medium">Lịch sử tìm kiếm (Firestore)</h3>
-                <ul className="text-sm mt-2 space-y-1">
-                  {recent.map(r => (
-                    <li key={r.id} className="text-gray-600">{r.query} — {new Date(r.createdAt.seconds * 1000).toLocaleString()}</li>
-                  ))}
-                  {recent.length === 0 && <li className="text-gray-500">Không có</li>}
-                </ul>
-              </div>
-            )}
+            {/* Firestore history removed */}
 
           </form>
         </div>
@@ -353,7 +310,16 @@ export default function App() {
               </Marker>
             ))}
 
-            <Circle center={[center.lat, center.lon]} radius={SEARCH_RADIUS} pathOptions={{ color: '#0ea5a4', opacity: 0.2 }} />
+            <Circle
+              center={[center.lat, center.lon]}
+              radius={SEARCH_RADIUS}
+              pathOptions={{ color: '#0ea5a4', opacity: 0.9 }}
+              eventHandlers={{}}
+              // use fill so the zone is visible over tiles
+              fillColor="#0ea5a4"
+              fillOpacity={0.12}
+              weight={2}
+            />
           </MapContainer>
           <div className="absolute left-4 bottom-4 bg-white/90 p-2 rounded shadow text-xs text-gray-600">Lat: {center.lat.toFixed(5)}, Lon: {center.lon.toFixed(5)}</div>
         </div>
