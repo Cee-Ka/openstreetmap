@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>my-map</title>
+    <!-- Tailwind CDN for quick styling during development -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              sky: {
+                600: '#0ea5a4'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <!-- Leaflet CSS (ensure map styles load even before JS bundling) -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-sA+e2m0b+0XGd6k3b5kYpJt0m7b3gT2f5q2a4hTQv7w="
+      crossorigin=""
+    />
+    <!-- Leaflet JS (only used for non-bundled dev cases) -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
