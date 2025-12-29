@@ -6,6 +6,7 @@ import 'leaflet/dist/leaflet.css'
 import AuthModal from './components/AuthModal'
 import UserMenu from './components/UserMenu'
 import { useAuth } from './contexts/AuthContext'
+import * as backendApi from './services/api'
 
 // Fix default marker icons for Leaflet when using webpack / Vite
 delete L.Icon.Default.prototype._getIconUrl
@@ -72,6 +73,21 @@ export default function App() {
   const [showAuthModal, setShowAuthModal] = useState(false)
   const { currentUser } = useAuth()
 
+  // Backend API state
+  const [useBackend, setUseBackend] = useState(false)
+  const [backendStatus, setBackendStatus] = useState('checking') // 'checking', 'online', 'offline'
+
+  // Check backend availability on mount
+  useEffect(() => {
+    async function checkBackend() {
+      const available = await backendApi.isBackendAvailable()
+      setUseBackend(available)
+      setBackendStatus(available ? 'online' : 'offline')
+      console.log('Backend status:', available ? '✅ Online' : '❌ Offline (using fallback)')
+    }
+    checkBackend()
+  }, [])
+
   // Fix map size on mount and resize
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -92,21 +108,27 @@ export default function App() {
 
   // Fetch weather data for coordinates
   async function fetchWeather(lat, lon, locationName) {
-    const apiKey = import.meta.env.VITE_OPENWEATHER_API_KEY
-    console.log('🌤️ fetchWeather called:', { lat, lon, locationName, hasKey: !!apiKey })
-    
-    if (!apiKey || apiKey === 'your_api_key_here') {
-      console.warn('⚠️ OpenWeather API key not configured')
-      return
-    }
-
     setWeatherLoading(true)
-    console.log('⏳ Setting weatherLoading to true')
-    
+    console.log('🌤️ fetchWeather called:', { lat, lon, locationName, useBackend })
+
     try {
-      const url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${apiKey}&units=metric&lang=vi`
-      console.log('📡 Fetching weather from API...')
-      
+      // Try backend API first if available
+      if (useBackend) {
+        console.log('📡 Fetching weather from backend API...')
+        const weatherData = await backendApi.getWeather(lat, lon, locationName)
+        console.log('✅ Weather data from backend:', weatherData)
+        setWeather(weatherData)
+        return
+      }
+
+      // Fallback to direct API call
+      const apiKey = import.meta.env.VITE_OPENWEATHER_API_KEY
+      if (!apiKey || apiKey === 'your_api_key_here') {
+        console.warn('⚠️ OpenWeather API key not configured')
+        return
+      }
+
+      console.log('📡 Fetching weather directly from OpenWeather API...')
       const { data } = await axios.get('https://api.openweathermap.org/data/2.5/weather', {
         params: {
           lat,
@@ -146,7 +168,7 @@ export default function App() {
     fetchWeather(center.lat, center.lon, 'Ho Chi Minh City')
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Translate English to Vietnamese using Google Translate API
+  // Translate English to Vietnamese
   async function handleTranslate() {
     if (!translateText.trim()) {
       setTranslateError('Vui lòng nhập văn bản cần dịch')
@@ -158,7 +180,16 @@ export default function App() {
     setTranslatedResult('')
 
     try {
-      // Using Google Translate API (free tier via googleapis)
+      // Try backend API first if available
+      if (useBackend) {
+        console.log('📡 Translating via backend API...')
+        const result = await backendApi.translateText(translateText, 'en', 'vi')
+        setTranslatedResult(result.translated)
+        return
+      }
+
+      // Fallback to direct Google Translate API
+      console.log('📡 Translating via Google Translate directly...')
       const response = await axios.get(
         'https://translate.googleapis.com/translate_a/single',
         {
@@ -194,30 +225,47 @@ export default function App() {
     setPois([])
 
     try {
-      // Geocode with Nominatim
-      const { data } = await axios.get('https://nominatim.openstreetmap.org/search', {
-        params: {
-          q: `${queryText} Vietnam`,
-          format: 'jsonv2',
-          addressdetails: 1,
-          limit: 1,
-          countrycodes: 'vn'
-        },
-        headers: { 
-          'Accept-Language': 'vi', 
-          'User-Agent': 'MyPOIApp/1.0' 
-        }
-      })
+      let lat, lon, locationName
 
-      if (!data?.length) {
-        setError('Không tìm thấy địa điểm. Thử tên khác.')
-        return
+      // Try backend API first if available
+      if (useBackend) {
+        console.log('📡 Geocoding via backend API...')
+        try {
+          const geoResult = await backendApi.geocodeLocation(queryText, 'vn')
+          lat = geoResult.lat
+          lon = geoResult.lon
+          locationName = geoResult.display_name
+        } catch (geoErr) {
+          console.warn('Backend geocoding failed, falling back to direct API')
+        }
       }
 
-      const { lat: latitude, lon: longitude } = data[0]
-      const lat = parseFloat(latitude)
-      const lon = parseFloat(longitude)
-      const locationName = data[0].display_name || queryText
+      // Fallback to direct Nominatim API
+      if (!lat || !lon) {
+        console.log('📡 Geocoding via Nominatim directly...')
+        const { data } = await axios.get('https://nominatim.openstreetmap.org/search', {
+          params: {
+            q: `${queryText} Vietnam`,
+            format: 'jsonv2',
+            addressdetails: 1,
+            limit: 1,
+            countrycodes: 'vn'
+          },
+          headers: { 
+            'Accept-Language': 'vi', 
+            'User-Agent': 'MyPOIApp/1.0' 
+          }
+        })
+
+        if (!data?.length) {
+          setError('Không tìm thấy địa điểm. Thử tên khác.')
+          return
+        }
+
+        lat = parseFloat(data[0].lat)
+        lon = parseFloat(data[0].lon)
+        locationName = data[0].display_name || queryText
+      }
       
       setCenter({ lat, lon })
       setZoom(15)
@@ -225,36 +273,56 @@ export default function App() {
       // Fetch weather for this location
       fetchWeather(lat, lon, locationName)
 
-      // Query Overpass API for nearby POIs
-      const overpassQuery = `
-        [out:json][timeout:25];
-        (
-          node(around:${SEARCH_RADIUS},${lat},${lon})[amenity];
-          node(around:${SEARCH_RADIUS},${lat},${lon})[shop];
-          node(around:${SEARCH_RADIUS},${lat},${lon})[tourism];
-        );
-        out center 20;`
+      // Try backend API for POIs first
+      let poisWithDistance = []
+      
+      if (useBackend) {
+        console.log('📡 Fetching POIs via backend API...')
+        try {
+          const poiResult = await backendApi.getPOIs(lat, lon, SEARCH_RADIUS)
+          poisWithDistance = poiResult.pois.map(p => ({
+            ...p,
+            dist: haversineDistance(lat, lon, p.lat, p.lon)
+          }))
+          .sort((a, b) => a.dist - b.dist)
+          .slice(0, 5)
+        } catch (poiErr) {
+          console.warn('Backend POI fetch failed, falling back to direct API')
+        }
+      }
 
-      const { data: overpassData } = await axios.post(
-        'https://overpass-api.de/api/interpreter', 
-        overpassQuery,
-        { headers: { 'Content-Type': 'text/plain' } }
-      )
+      // Fallback to direct Overpass API
+      if (poisWithDistance.length === 0) {
+        console.log('📡 Fetching POIs via Overpass directly...')
+        const overpassQuery = `
+          [out:json][timeout:25];
+          (
+            node(around:${SEARCH_RADIUS},${lat},${lon})[amenity];
+            node(around:${SEARCH_RADIUS},${lat},${lon})[shop];
+            node(around:${SEARCH_RADIUS},${lat},${lon})[tourism];
+          );
+          out center 20;`
 
-      const elements = overpassData?.elements || []
+        const { data: overpassData } = await axios.post(
+          'https://overpass-api.de/api/interpreter', 
+          overpassQuery,
+          { headers: { 'Content-Type': 'text/plain' } }
+        )
 
-      // Calculate distances and get top 5
-      const poisWithDistance = elements
-        .map(el => ({
-          id: el.id,
-          lat: el.lat || el.center?.lat,
-          lon: el.lon || el.center?.lon,
-          tags: el.tags || {},
-          dist: haversineDistance(lat, lon, el.lat || el.center?.lat, el.lon || el.center?.lon)
-        }))
-        .filter(p => p.lat && p.lon)
-        .sort((a, b) => a.dist - b.dist)
-        .slice(0, 5)
+        const elements = overpassData?.elements || []
+
+        poisWithDistance = elements
+          .map(el => ({
+            id: el.id,
+            lat: el.lat || el.center?.lat,
+            lon: el.lon || el.center?.lon,
+            tags: el.tags || {},
+            dist: haversineDistance(lat, lon, el.lat || el.center?.lat, el.lon || el.center?.lon)
+          }))
+          .filter(p => p.lat && p.lon)
+          .sort((a, b) => a.dist - b.dist)
+          .slice(0, 5)
+      }
 
       setPois(poisWithDistance)
 
@@ -275,6 +343,23 @@ export default function App() {
           <div className="flex items-center gap-3">
             <span className="text-3xl">🗺️</span>
             <h1 className="text-2xl font-bold text-sky-700 hidden sm:block">Vietnam POI Map</h1>
+            {/* Backend Status Indicator */}
+            <div className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+              backendStatus === 'online' 
+                ? 'bg-green-100 text-green-700' 
+                : backendStatus === 'offline' 
+                  ? 'bg-yellow-100 text-yellow-700'
+                  : 'bg-gray-100 text-gray-500'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${
+                backendStatus === 'online' 
+                  ? 'bg-green-500' 
+                  : backendStatus === 'offline' 
+                    ? 'bg-yellow-500'
+                    : 'bg-gray-400 animate-pulse'
+              }`}></span>
+              {backendStatus === 'online' ? 'Backend API' : backendStatus === 'offline' ? 'Fallback Mode' : 'Checking...'}
+            </div>
           </div>
           <div className="flex items-center gap-3">
             {currentUser && (
