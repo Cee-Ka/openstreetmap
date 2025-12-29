@@ -3,6 +3,9 @@ import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-le
 import L from 'leaflet'
 import axios from 'axios'
 import 'leaflet/dist/leaflet.css'
+import AuthModal from './components/AuthModal'
+import UserMenu from './components/UserMenu'
+import { useAuth } from './contexts/AuthContext'
 
 // Fix default marker icons for Leaflet when using webpack / Vite
 delete L.Icon.Default.prototype._getIconUrl
@@ -57,6 +60,17 @@ export default function App() {
   const [weather, setWeather] = useState(null)
   const [weatherLoading, setWeatherLoading] = useState(false)
   const mapRef = useRef()
+
+  // Translation popup state
+  const [showTranslatePopup, setShowTranslatePopup] = useState(false)
+  const [translateText, setTranslateText] = useState('')
+  const [translatedResult, setTranslatedResult] = useState('')
+  const [translateLoading, setTranslateLoading] = useState(false)
+  const [translateError, setTranslateError] = useState(null)
+
+  // Auth modal state
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const { currentUser } = useAuth()
 
   // Fix map size on mount and resize
   useEffect(() => {
@@ -131,6 +145,47 @@ export default function App() {
     console.log('🚀 Component mounted, loading initial weather...')
     fetchWeather(center.lat, center.lon, 'Ho Chi Minh City')
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Translate English to Vietnamese using Google Translate API
+  async function handleTranslate() {
+    if (!translateText.trim()) {
+      setTranslateError('Vui lòng nhập văn bản cần dịch')
+      return
+    }
+
+    setTranslateLoading(true)
+    setTranslateError(null)
+    setTranslatedResult('')
+
+    try {
+      // Using Google Translate API (free tier via googleapis)
+      const response = await axios.get(
+        'https://translate.googleapis.com/translate_a/single',
+        {
+          params: {
+            client: 'gtx',
+            sl: 'en',
+            tl: 'vi',
+            dt: 't',
+            q: translateText
+          }
+        }
+      )
+
+      // Parse the response - Google returns nested arrays
+      const translations = response.data[0]
+      const translatedText = translations
+        .map(item => item[0])
+        .join('')
+      
+      setTranslatedResult(translatedText)
+    } catch (err) {
+      console.error('Translation error:', err)
+      setTranslateError('Lỗi khi dịch. Vui lòng thử lại sau.')
+    } finally {
+      setTranslateLoading(false)
+    }
+  }
 
   async function handleSearch(e) {
     e?.preventDefault()
@@ -215,6 +270,22 @@ export default function App() {
     <div className="min-h-screen bg-gradient-to-b from-sky-50 to-white p-6">
       {console.log('🎨 Render - weather:', weather, 'weatherLoading:', weatherLoading)}
       <div className="max-w-7xl mx-auto">
+        {/* Header with User Menu */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <span className="text-3xl">🗺️</span>
+            <h1 className="text-2xl font-bold text-sky-700 hidden sm:block">Vietnam POI Map</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            {currentUser && (
+              <span className="text-sm text-gray-500 hidden md:block">
+                Xin chào, {currentUser.displayName || 'Người dùng'}!
+              </span>
+            )}
+            <UserMenu onLoginClick={() => setShowAuthModal(true)} />
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           
           {/* Search Panel - Left */}
@@ -424,6 +495,119 @@ export default function App() {
         Dữ liệu từ OpenStreetMap (Nominatim & Overpass API)
       </footer>
       </div>
+
+      {/* Translation Button - Fixed position */}
+      <button
+        onClick={() => setShowTranslatePopup(true)}
+        className="fixed bottom-6 right-6 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white p-4 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 z-[2000] flex items-center gap-2 group"
+        title="Dịch Anh-Việt"
+      >
+        <span className="text-2xl">🌐</span>
+        <span className="hidden group-hover:inline text-sm font-medium">Dịch thuật</span>
+      </button>
+
+      {/* Translation Popup */}
+      {showTranslatePopup && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3000] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md animate-in fade-in zoom-in duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <span className="text-2xl">🌐</span> Dịch Anh → Việt
+              </h3>
+              <button
+                onClick={() => {
+                  setShowTranslatePopup(false)
+                  setTranslateText('')
+                  setTranslatedResult('')
+                  setTranslateError(null)
+                }}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 transition"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4 space-y-4">
+              {/* Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Văn bản tiếng Anh
+                </label>
+                <textarea
+                  value={translateText}
+                  onChange={(e) => setTranslateText(e.target.value)}
+                  placeholder="Enter English text here..."
+                  className="w-full border border-gray-200 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-green-300 resize-none h-28"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && e.ctrlKey) {
+                      handleTranslate()
+                    }
+                  }}
+                />
+                <p className="text-xs text-gray-400 mt-1">Nhấn Ctrl+Enter để dịch nhanh</p>
+              </div>
+
+              {/* Translate Button */}
+              <button
+                onClick={handleTranslate}
+                disabled={translateLoading || !translateText.trim()}
+                className="w-full py-3 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-medium shadow-md hover:shadow-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {translateLoading ? (
+                  <>
+                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Đang dịch...
+                  </>
+                ) : (
+                  <>
+                    <span>🔄</span> Dịch sang tiếng Việt
+                  </>
+                )}
+              </button>
+
+              {/* Error */}
+              {translateError && (
+                <div className="text-sm text-red-600 bg-red-50 p-3 rounded-lg">
+                  {translateError}
+                </div>
+              )}
+
+              {/* Result */}
+              {translatedResult && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Kết quả tiếng Việt
+                  </label>
+                  <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-lg p-3 min-h-[100px]">
+                    <p className="text-gray-800 whitespace-pre-wrap">{translatedResult}</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(translatedResult)
+                    }}
+                    className="mt-2 text-sm text-green-600 hover:text-green-700 flex items-center gap-1"
+                  >
+                    <span>📋</span> Sao chép kết quả
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auth Modal */}
+      <AuthModal 
+        isOpen={showAuthModal} 
+        onClose={() => setShowAuthModal(false)} 
+      />
     </div>
   )
 }
